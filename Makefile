@@ -1,6 +1,6 @@
 all: raycast.c
-	gcc raycast.c -o raycast -lm 
+	gcc raytrace.c -o raytrace -lm 
 
 clean:
-	rm -rf raycast *~
+	rm -rf raytrace *~
 
