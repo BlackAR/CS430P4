@@ -1074,6 +1074,134 @@ double fang(Light *light, double *L){
 	return 0;
 }
 
+Pixel* trace(Object **objects, Light **lights, double* Ro, double* Rd){
+	Pixel* current_pixel = malloc(sizeof(Pixel));
+  	double Ron[3];
+  	double Rdn[3];
+  	int closest_shadow_object;
+	double closest_t = INFINITY;
+	Object * closest_object = NULL;
+	for (int i=0; objects[i] != 0; i += 1) {
+		double t = 0;
+		switch(objects[i]->type) {
+			case 0:
+		  		t = sphere_intersection(Ro, Rd, objects[i]->position, objects[i]->sphere.radius);
+		  		break;
+			case 1:
+		  		t = plane_intersection(Ro, Rd, objects[i]->position, objects[i]->plane.normal);
+		  		break;
+			default:
+		  		printf("Error: Unknown object type. Element: %d\n", i);	
+		  		exit(1);
+		}
+		if (t > 0 && t < closest_t) {
+			closest_t = t;
+	  		closest_object = objects[i];
+		}
+	}
+	if (closest_t > 0 && closest_t != INFINITY) {
+		// We have the closest object..
+  		double color[3];
+  		color[0] = 0; // ambient_color[0];
+	  	color[1] = 0; // ambient_color[1];
+	  	color[2] = 0; // ambient_color[2];
+  		for (int j=0; lights[j] != NULL; j+=1) {
+	    	// Shadow test
+      		Ron[0] = closest_t * Rd[0] + Ro[0];
+	      	Ron[1] = closest_t * Rd[1] + Ro[1];
+	      	Ron[2] = closest_t * Rd[2] + Ro[2];
+	      	Rdn[0] = lights[j]->position[0] - Ron[0];
+	      	Rdn[1] = lights[j]->position[1] - Ron[1];
+	      	Rdn[2] = lights[j]->position[2] - Ron[2];
+	      	double distance_to_light = vector_length(Rdn);
+	      	vector_normalize(Rdn);
+	      	double shadow_t;
+	      	closest_shadow_object = 0;
+	      	for (int k=0; objects[k] != NULL; k+=1) {
+				if (objects[k] == closest_object) {
+					continue;
+				} 
+				switch(objects[k]->type) {
+					case 0:
+					  	shadow_t = sphere_intersection(Ron, Rdn, objects[k]->position, objects[k]->sphere.radius);
+					  	break;
+					case 1:
+		        		shadow_t = plane_intersection(Ron, Rdn, objects[k]->position, objects[k]->plane.normal);
+						break;
+					default:
+					  	printf("Error: Unknown object type. Element: %d\n", k);	
+		        		exit(1);
+				}
+				if (0 < shadow_t && shadow_t < distance_to_light) {
+					closest_shadow_object = 1;
+					break;
+				}
+	      	}
+	      	if (closest_shadow_object == 0) {
+				// N, L, R, V
+				double N[3];
+				double L[3];
+				double R[3];
+				double V[3];
+				double radial_light;
+				double angular_light;
+				//Get N
+				if(closest_object->type == 1){
+					N[0] = closest_object->plane.normal[0]; // plane	
+					N[1] = closest_object->plane.normal[1];
+					N[2] = closest_object->plane.normal[2];
+				}
+				else if(closest_object->type == 0){
+					N[0] = Ron[0] - closest_object->position[0]; // sphere
+					N[1] = Ron[1] - closest_object->position[1];
+					N[2] = Ron[2] - closest_object->position[2];
+				}
+				else{
+					printf("Error: Unknown object type.\n");	
+		        	exit(1);
+				}
+				vector_normalize(N);
+				//Get L
+				L[0] = Rdn[0]; // light_position - Ron;
+				L[1] = Rdn[1];
+				L[2] = Rdn[2];
+				vector_normalize(L);
+				//Get R
+				vector_reflection(N, L, R);
+				vector_normalize(R);
+				//Get V
+				V[0] = -1*Rd[0];
+				V[1] = -1*Rd[1];
+				V[2] = -1*Rd[2];
+				vector_normalize(V);
+			 	double diffuse[3];
+				diffuse[0] = calculate_diffuse(closest_object->diffuse_color[0], lights[j]->color[0], N, L);
+				diffuse[1] = calculate_diffuse(closest_object->diffuse_color[1], lights[j]->color[1], N, L);
+				diffuse[2] = calculate_diffuse(closest_object->diffuse_color[2], lights[j]->color[2], N, L);
+				double specular[3];
+				specular[0] = calculate_specular(L, N, R, V, closest_object->specular_color[0], lights[j]->color[0]);
+				specular[1] = calculate_specular(L, N, R, V, closest_object->specular_color[1], lights[j]->color[1]);
+				specular[2] = calculate_specular(L, N, R, V, closest_object->specular_color[2], lights[j]->color[2]);
+				radial_light = frad(lights[j], distance_to_light);
+				angular_light = fang(lights[j], L);
+				color[0] += radial_light * angular_light * (diffuse[0] + specular[0]);
+				color[1] += radial_light * angular_light * (diffuse[1] + specular[1]);
+				color[2] += radial_light * angular_light * (diffuse[2] + specular[2]);
+	      	}
+	    }
+  		current_pixel->r = (unsigned char)(255 * clamp(color[0]));
+		current_pixel->g = (unsigned char)(255 * clamp(color[1]));
+		current_pixel->b = (unsigned char)(255 * clamp(color[2]));
+		return current_pixel;
+	}	 
+	else {
+	  current_pixel->r = 0;
+	  current_pixel->g = 0;
+	  current_pixel->b = 0;
+	  return current_pixel;
+	}
+}
+
 //--------------IMAGE FUNCTIONS----------------------
 
 void generate_scene(Camera *camera, Object **objects, Light **lights, Pixel *buffer, int width, int height){
@@ -1096,9 +1224,9 @@ void generate_scene(Camera *camera, Object **objects, Light **lights, Pixel *buf
   double camera_height = camera->height;
   double pixheight = camera_height / height;
   double pixwidth = camera_width / width;
-  double Ron[3];
-  double Rdn[3];
-  int closest_shadow_object;
+  Pixel* current_pixel;
+  int position;
+
 
   for (int y = 0; y < height; y += 1) {
     for (int x = 0; x < width; x += 1) {
@@ -1110,130 +1238,12 @@ void generate_scene(Camera *camera, Object **objects, Light **lights, Pixel *buf
         1
       };
       vector_normalize(Rd);
-
-      double closest_t = INFINITY;
-      Object * closest_object = NULL;
-      for (int i=0; objects[i] != 0; i += 1) {
-        double t = 0;
-
-        switch(objects[i]->type) {
-        case 0:
-          t = sphere_intersection(Ro, Rd, objects[i]->position, objects[i]->sphere.radius);
-          break;
-        case 1:
-          t = plane_intersection(Ro, Rd, objects[i]->position, objects[i]->plane.normal);
-          break;
-        default:
-          printf("Error: Unknown object type. Element: %d\n", i);	
-          exit(1);
-        }
-        if (t > 0 && t < closest_t) {
-          closest_t = t;
-          closest_object = objects[i];
-				}
-        if (closest_t > 0 && closest_t != INFINITY) {
-          // We have the closest object..
-			  	double color[3];
-	    	  color[0] = 0; // ambient_color[0];
-	      	color[1] = 0; // ambient_color[1];
-	    	  color[2] = 0; // ambient_color[2];
-	    	  for (int j=0; lights[j] != NULL; j+=1) {
-			      // Shadow test
-			      Ron[0] = closest_t * Rd[0] + Ro[0];
-			      Ron[1] = closest_t * Rd[1] + Ro[1];
-			      Ron[2] = closest_t * Rd[2] + Ro[2];
-			      Rdn[0] = lights[j]->position[0] - Ron[0];
-			      Rdn[1] = lights[j]->position[1] - Ron[1];
-			      Rdn[2] = lights[j]->position[2] - Ron[2];
-			      double distance_to_light = vector_length(Rdn);
-			      vector_normalize(Rdn);
-			      double shadow_t;
-			      closest_shadow_object = 0;
-			      for (int k=0; objects[k] != NULL; k+=1) {
-							if (objects[k] == closest_object) {
-								continue;
-							} 
-							switch(objects[k]->type) {
-							case 0:
-							  shadow_t = sphere_intersection(Ron, Rdn, objects[k]->position, objects[k]->sphere.radius);
-							  break;
-							case 1:
-				        shadow_t = plane_intersection(Ron, Rdn, objects[k]->position, objects[k]->plane.normal);
-							  break;
-							default:
-							  printf("Error: Unknown object type. Element: %d\n", i);	
-				        exit(1);
-							}
-							if (0 < shadow_t && shadow_t < distance_to_light) {
-							  closest_shadow_object = 1;
-							  break;
-								}
-			      }
-			      if (closest_shadow_object == 0) {
-							// N, L, R, V
-							double N[3];
-							double L[3];
-							double R[3];
-							double V[3];
-							double radial_light;
-							double angular_light;
-							//Get N
-							if(closest_object->type == 1){
-								N[0] = closest_object->plane.normal[0]; // plane	
-								N[1] = closest_object->plane.normal[1];
-								N[2] = closest_object->plane.normal[2];
-							}
-							else if(closest_object->type == 0){
-								N[0] = Ron[0] - closest_object->position[0]; // sphere
-								N[1] = Ron[1] - closest_object->position[1];
-								N[2] = Ron[2] - closest_object->position[2];
-							}
-							else{
-								printf("Error: Unknown object type. Element: %d\n", i);	
-				        exit(1);
-							}
-							vector_normalize(N);
-							//Get L
-							L[0] = Rdn[0]; // light_position - Ron;
-							L[1] = Rdn[1];
-							L[2] = Rdn[2];
-							vector_normalize(L);
-							//Get R
-							vector_reflection(N, L, R);
-							vector_normalize(R);
-							//Get V
-							V[0] = -1*Rd[0];
-							V[1] = -1*Rd[1];
-							V[2] = -1*Rd[2];
-							vector_normalize(V);
-					 		double diffuse[3];
-							diffuse[0] = calculate_diffuse(closest_object->diffuse_color[0], lights[j]->color[0], N, L);
-							diffuse[1] = calculate_diffuse(closest_object->diffuse_color[1], lights[j]->color[1], N, L);
-							diffuse[2] = calculate_diffuse(closest_object->diffuse_color[2], lights[j]->color[2], N, L);
-							double specular[3];
-							specular[0] = calculate_specular(L, N, R, V, closest_object->specular_color[0], lights[j]->color[0]);
-							specular[1] = calculate_specular(L, N, R, V, closest_object->specular_color[1], lights[j]->color[1]);
-							specular[2] = calculate_specular(L, N, R, V, closest_object->specular_color[2], lights[j]->color[2]);
-							radial_light = frad(lights[j], distance_to_light);
-							angular_light = fang(lights[j], L);
-							color[0] += radial_light * angular_light * (diffuse[0] + specular[0]);
-							color[1] += radial_light * angular_light * (diffuse[1] + specular[1]);
-							color[2] += radial_light * angular_light * (diffuse[2] + specular[2]);
-			      }
-			    }
-          int position = (height-(y+1))*width+x;
-          buffer[position].r = (unsigned char)(255 * clamp(color[0]));
-	    	  buffer[position].g = (unsigned char)(255 * clamp(color[1]));
-	    	  buffer[position].b = (unsigned char)(255 * clamp(color[2]));
-        
-        } 
-        else {
-          int position = (height-(y+1))*width+x;
-          buffer[position].r = 0;
-          buffer[position].g = 0;
-          buffer[position].b = 0;
-        }
-      }
+      current_pixel = trace(objects, lights, Ro, Rd);
+      position = (height-(y+1))*width+x;
+      buffer[position].r = current_pixel->r;
+      buffer[position].g = current_pixel->g;
+      buffer[position].b = current_pixel->b;
+      free(current_pixel);
     }
   } 
 
