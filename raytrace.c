@@ -22,7 +22,7 @@ typedef struct Object{
   double specular_color[3];
   double reflectivity;
   double refractivity;
-  double ior
+  double ior;
   union {
     struct {
       double radius;
@@ -38,7 +38,6 @@ typedef struct Camera{
   double height;
 } Camera;
 
-//TODO: Finish light object
 typedef struct Light{
   double color[3];
   double position[3];
@@ -571,6 +570,50 @@ void read_scene(char *filename, Camera *camera, Object **objects, Light **lights
             }
             else{
               fprintf(stderr, "Error: Non-object type has color value on line number %d.\n", line);
+              fclose(json);
+              exit(1);
+            }
+          }
+          else if(strcmp(key, "reflectivity") == 0){ 
+            if(current_type == 1 || current_type == 2){  //only spheres and planes have specular color
+                objects[current_item]->reflectivity = next_number(json);
+                int value = objects[current_item]->reflectivity + objects[current_item]->refractivity;
+                if (value > 1){
+                	fprintf(stderr, "Error: Sum of refractivity and reflectivity of object exceed 1 on line: %d.\n", line);
+              		fclose(json);
+              		exit(1);
+
+                }
+            }
+            else{
+              fprintf(stderr, "Error: Non-object type has reflectivity value on line number %d.\n", line);
+              fclose(json);
+              exit(1);
+            }
+          }
+          else if(strcmp(key, "refractivity") == 0){ 
+            if(current_type == 1 || current_type == 2){  //only spheres and planes have specular color
+                objects[current_item]->refractivity = next_number(json);
+                int value = objects[current_item]->reflectivity + objects[current_item]->refractivity;
+                if (value > 1){
+                	fprintf(stderr, "Error: Sum of refractivity and reflectivity of object exceed 1 on line: %d.\n", line);
+              		fclose(json);
+              		exit(1);
+
+                }
+            }
+            else{
+              fprintf(stderr, "Error: Non-object type has refractivity value on line number %d.\n", line);
+              fclose(json);
+              exit(1);
+            }
+          }
+          else if(strcmp(key, "ior") == 0){ 
+            if(current_type == 1 || current_type == 2){  //only spheres and planes have specular color
+                objects[current_item]->ior = next_number(json);
+            }
+            else{
+              fprintf(stderr, "Error: Non-object type has IoR value on line number %d.\n", line);
               fclose(json);
               exit(1);
             }
