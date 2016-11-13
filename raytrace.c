@@ -1,8 +1,8 @@
 /*
  ============================================================================
- Name        : raycast.c
+ Name        : raytrace.c
  Author      : Anthony Black
- Description : CS430 Project 2: Raycaster
+ Description : CS430 Project 4: Ray Tracing
  ============================================================================
  */
 
@@ -20,6 +20,9 @@ typedef struct Object{
   double position[3];
   double diffuse_color[3];
   double specular_color[3];
+  double reflectivity;
+  double refractivity;
+  double ior
   union {
     struct {
       double radius;
