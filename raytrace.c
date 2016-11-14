@@ -12,7 +12,8 @@
 #include <string.h>
 #include <ctype.h>
 
-//#define DEBUG 1 //uncomment to see print statements   
+//#define DEBUG 1 //uncomment to see print statements
+#define MAX_DEPTH 7   
 //STRUCTURES
 // Plymorphism in C
 typedef struct Object{
@@ -49,12 +50,16 @@ typedef struct Light{
   double angular_a0;
 } Light;
 
-
 typedef struct Pixel{
   unsigned char r, b, g;
 }Pixel;
 
-//PROTOTYPE DECLARATIONS
+typedef struct Closest{
+	Object* closest_object;
+	double closest_t;
+}Closest;
+
+//PROTOTYPE DECLARATIONS 
 
 //--------------JSON READING FUNCTIONS----------------------
 
@@ -108,6 +113,10 @@ void generate_scene(Camera* camera, Object** objects, Light** lights, Pixel* buf
 void write_p3(Pixel *buffer, FILE *output_file, int width, int height, int max_color);
 
 double clamp(double value);
+
+Closest* shoot(double* Ro, double* Rd, Object **objects);
+
+Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd, Closest* current_object, int depth);
 
 //===========================================================================================================
 
@@ -1074,14 +1083,13 @@ double fang(Light *light, double *L){
 	return 0;
 }
 
-Pixel* trace(Object **objects, Light **lights, double* Ro, double* Rd){
-	Pixel* current_pixel = malloc(sizeof(Pixel));
-  	double Ron[3];
+Closest* shoot(double* Ro, double* Rd, Object** objects){
+	Closest* best_values = malloc(sizeof(Closest));
+	best_values->closest_object = NULL;
+	best_values->closest_t = INFINITY;
+	double Ron[3];
   	double Rdn[3];
-  	int closest_shadow_object;
-	double closest_t = INFINITY;
-	Object * closest_object = NULL;
-	for (int i=0; objects[i] != 0; i += 1) {
+  	for (int i=0; objects[i] != 0; i += 1) {
 		double t = 0;
 		switch(objects[i]->type) {
 			case 0:
@@ -1094,112 +1102,12 @@ Pixel* trace(Object **objects, Light **lights, double* Ro, double* Rd){
 		  		printf("Error: Unknown object type. Element: %d\n", i);	
 		  		exit(1);
 		}
-		if (t > 0 && t < closest_t) {
-			closest_t = t;
-	  		closest_object = objects[i];
+		if (t > 0 && t < best_values->closest_t) {
+			best_values->closest_t = t;
+	  		best_values->closest_object = objects[i];
 		}
 	}
-	if (closest_t > 0 && closest_t != INFINITY) {
-		// We have the closest object..
-  		double color[3];
-  		color[0] = 0; // ambient_color[0];
-	  	color[1] = 0; // ambient_color[1];
-	  	color[2] = 0; // ambient_color[2];
-  		for (int j=0; lights[j] != NULL; j+=1) {
-	    	// Shadow test
-      		Ron[0] = closest_t * Rd[0] + Ro[0];
-	      	Ron[1] = closest_t * Rd[1] + Ro[1];
-	      	Ron[2] = closest_t * Rd[2] + Ro[2];
-	      	Rdn[0] = lights[j]->position[0] - Ron[0];
-	      	Rdn[1] = lights[j]->position[1] - Ron[1];
-	      	Rdn[2] = lights[j]->position[2] - Ron[2];
-	      	double distance_to_light = vector_length(Rdn);
-	      	vector_normalize(Rdn);
-	      	double shadow_t;
-	      	closest_shadow_object = 0;
-	      	for (int k=0; objects[k] != NULL; k+=1) {
-				if (objects[k] == closest_object) {
-					continue;
-				} 
-				switch(objects[k]->type) {
-					case 0:
-					  	shadow_t = sphere_intersection(Ron, Rdn, objects[k]->position, objects[k]->sphere.radius);
-					  	break;
-					case 1:
-		        		shadow_t = plane_intersection(Ron, Rdn, objects[k]->position, objects[k]->plane.normal);
-						break;
-					default:
-					  	printf("Error: Unknown object type. Element: %d\n", k);	
-		        		exit(1);
-				}
-				if (0 < shadow_t && shadow_t < distance_to_light) {
-					closest_shadow_object = 1;
-					break;
-				}
-	      	}
-	      	if (closest_shadow_object == 0) {
-				// N, L, R, V
-				double N[3];
-				double L[3];
-				double R[3];
-				double V[3];
-				double radial_light;
-				double angular_light;
-				//Get N
-				if(closest_object->type == 1){
-					N[0] = closest_object->plane.normal[0]; // plane	
-					N[1] = closest_object->plane.normal[1];
-					N[2] = closest_object->plane.normal[2];
-				}
-				else if(closest_object->type == 0){
-					N[0] = Ron[0] - closest_object->position[0]; // sphere
-					N[1] = Ron[1] - closest_object->position[1];
-					N[2] = Ron[2] - closest_object->position[2];
-				}
-				else{
-					printf("Error: Unknown object type.\n");	
-		        	exit(1);
-				}
-				vector_normalize(N);
-				//Get L
-				L[0] = Rdn[0]; // light_position - Ron;
-				L[1] = Rdn[1];
-				L[2] = Rdn[2];
-				vector_normalize(L);
-				//Get R
-				vector_reflection(N, L, R);
-				vector_normalize(R);
-				//Get V
-				V[0] = -1*Rd[0];
-				V[1] = -1*Rd[1];
-				V[2] = -1*Rd[2];
-				vector_normalize(V);
-			 	double diffuse[3];
-				diffuse[0] = calculate_diffuse(closest_object->diffuse_color[0], lights[j]->color[0], N, L);
-				diffuse[1] = calculate_diffuse(closest_object->diffuse_color[1], lights[j]->color[1], N, L);
-				diffuse[2] = calculate_diffuse(closest_object->diffuse_color[2], lights[j]->color[2], N, L);
-				double specular[3];
-				specular[0] = calculate_specular(L, N, R, V, closest_object->specular_color[0], lights[j]->color[0]);
-				specular[1] = calculate_specular(L, N, R, V, closest_object->specular_color[1], lights[j]->color[1]);
-				specular[2] = calculate_specular(L, N, R, V, closest_object->specular_color[2], lights[j]->color[2]);
-				radial_light = frad(lights[j], distance_to_light);
-				angular_light = fang(lights[j], L);
-				color[0] += radial_light * angular_light * (diffuse[0] + specular[0]);
-				color[1] += radial_light * angular_light * (diffuse[1] + specular[1]);
-				color[2] += radial_light * angular_light * (diffuse[2] + specular[2]);
-	      	}
-	    }
-  		current_pixel->r = (unsigned char)(255 * clamp(color[0]));
-		current_pixel->g = (unsigned char)(255 * clamp(color[1]));
-		current_pixel->b = (unsigned char)(255 * clamp(color[2]));
-		return current_pixel;
-	}	 
-	else {
-	  current_pixel->r = 0;
-	  current_pixel->g = 0;
-	  current_pixel->b = 0;
-	  return current_pixel;
-	}
+	return best_values;
 }
 
 //--------------IMAGE FUNCTIONS----------------------
@@ -1226,24 +1134,30 @@ void generate_scene(Camera *camera, Object **objects, Light **lights, Pixel *buf
   double pixwidth = camera_width / width;
   Pixel* current_pixel;
   int position;
-
-
   for (int y = 0; y < height; y += 1) {
     for (int x = 0; x < width; x += 1) {
-      double Ro[3] = {0, 0, 0};
-      // Rd = normalize(P - Ro)
-      double Rd[3] = {
-        0 - (camera_width/2) + pixwidth * (x + 0.5),
-        0 - (camera_height/2) + pixheight * (y + 0.5),
-        1
-      };
-      vector_normalize(Rd);
-      current_pixel = trace(objects, lights, Ro, Rd);
-      position = (height-(y+1))*width+x;
-      buffer[position].r = current_pixel->r;
-      buffer[position].g = current_pixel->g;
-      buffer[position].b = current_pixel->b;
-      free(current_pixel);
+      	double Ro[3] = {0, 0, 0};
+      	// Rd = normalize(P - Ro)
+      	double Rd[3] = {
+        	0 - (camera_width/2) + pixwidth * (x + 0.5),
+        	0 - (camera_height/2) + pixheight * (y + 0.5),
+        	1
+  		};
+      	vector_normalize(Rd);
+  		Closest* nearest_object = shoot(Ro, Rd, objects);
+		if (nearest_object->closest_t > 0 && nearest_object->closest_t != INFINITY) {
+			current_pixel = recursive_shade(objects, lights, Ro, Rd, nearest_object, 0);
+		}	 
+		else {
+		  	current_pixel->r = 0;
+		  	current_pixel->g = 0;
+		  	current_pixel->b = 0;
+		}
+      	position = (height-(y+1))*width+x;
+      	buffer[position].r = current_pixel->r;
+      	buffer[position].g = current_pixel->g;
+      	buffer[position].b = current_pixel->b;
+      	free(current_pixel);
     }
   } 
 
@@ -1296,3 +1210,105 @@ double clamp(double value){
 	}
 }
 
+Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd, Closest* current_object, int depth){
+	// We have the closest object..
+	Pixel* current_pixel = malloc(sizeof(Pixel));
+	Object* closest_object = current_object->closest_object;
+	double closest_t = current_object->closest_t;
+	double color[3];
+	double Ron[3];
+	double Rdn[3];
+	color[0] = 0; // ambient_color[0];
+  	color[1] = 0; // ambient_color[1];
+  	color[2] = 0; // ambient_color[2];
+	for (int j=0; lights[j] != NULL; j+=1) {
+    	// Shadow test
+  		Ron[0] = closest_t * Rd[0] + Ro[0];
+      	Ron[1] = closest_t * Rd[1] + Ro[1];
+      	Ron[2] = closest_t * Rd[2] + Ro[2];
+      	Rdn[0] = lights[j]->position[0] - Ron[0];
+      	Rdn[1] = lights[j]->position[1] - Ron[1];
+      	Rdn[2] = lights[j]->position[2] - Ron[2];
+      	double distance_to_light = vector_length(Rdn);
+      	vector_normalize(Rdn);
+      	//TODOrecursive_shade
+      	double shadow_t;
+      	int closest_shadow_object = 0;
+      	for (int k=0; objects[k] != NULL; k+=1) {
+			if (objects[k] == closest_object) {
+				continue;
+			} 
+			switch(objects[k]->type) {
+				case 0:
+				  	shadow_t = sphere_intersection(Ron, Rdn, objects[k]->position, objects[k]->sphere.radius);
+				  	break;
+				case 1:
+	        		shadow_t = plane_intersection(Ron, Rdn, objects[k]->position, objects[k]->plane.normal);
+					break;
+				default:
+				  	printf("Error: Unknown object type. Element: %d\n", k);	
+	        		exit(1);
+			}
+			if (0 < shadow_t && shadow_t < distance_to_light) {
+				closest_shadow_object = 1;
+				break;
+			}
+      	}
+      	if (closest_shadow_object == 0) {
+			// N, L, R, V
+			double N[3];
+			double L[3];
+			double R[3];
+			double V[3];
+			double radial_light;
+			double angular_light;
+			//Get N
+			if(closest_object->type == 1){
+				N[0] = closest_object->plane.normal[0]; // plane	
+				N[1] = closest_object->plane.normal[1];
+				N[2] = closest_object->plane.normal[2];
+			}
+			else if(closest_object->type == 0){
+				N[0] = Ron[0] - closest_object->position[0]; // sphere
+				N[1] = Ron[1] - closest_object->position[1];
+				N[2] = Ron[2] - closest_object->position[2];
+			}
+			else{
+				printf("Error: Unknown object type.\n");	
+	        	exit(1);
+			}
+			vector_normalize(N);
+			//Get L
+			L[0] = Rdn[0]; // light_position - Ron;
+			L[1] = Rdn[1];
+			L[2] = Rdn[2];
+			vector_normalize(L);
+			//Get R
+			vector_reflection(N, L, R);
+			vector_normalize(R);
+			//Get V
+			V[0] = -1*Rd[0];
+			V[1] = -1*Rd[1];
+			V[2] = -1*Rd[2];
+			vector_normalize(V);
+		 	double diffuse[3];
+			diffuse[0] = calculate_diffuse(closest_object->diffuse_color[0], lights[j]->color[0], N, L);
+			diffuse[1] = calculate_diffuse(closest_object->diffuse_color[1], lights[j]->color[1], N, L);
+			diffuse[2] = calculate_diffuse(closest_object->diffuse_color[2], lights[j]->color[2], N, L);
+			double specular[3];
+			specular[0] = calculate_specular(L, N, R, V, closest_object->specular_color[0], lights[j]->color[0]);
+			specular[1] = calculate_specular(L, N, R, V, closest_object->specular_color[1], lights[j]->color[1]);
+			specular[2] = calculate_specular(L, N, R, V, closest_object->specular_color[2], lights[j]->color[2]);
+			radial_light = frad(lights[j], distance_to_light);
+			angular_light = fang(lights[j], L);
+			color[0] += radial_light * angular_light * (diffuse[0] + specular[0]);
+			color[1] += radial_light * angular_light * (diffuse[1] + specular[1]);
+			color[2] += radial_light * angular_light * (diffuse[2] + specular[2]);
+      	}
+    }
+	current_pixel->r = (unsigned char)(255 * clamp(color[0]));
+	current_pixel->g = (unsigned char)(255 * clamp(color[1]));
+	current_pixel->b = (unsigned char)(255 * clamp(color[2]));
+	return current_pixel;
+	
+}
