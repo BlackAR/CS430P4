@@ -21,7 +21,7 @@ typedef struct Object{
   double position[3];
   double diffuse_color[3];
   double specular_color[3];
-  double reflectivity;
+  double reflectivity	;
   double refractivity;
   double ior;
   union {
@@ -428,11 +428,10 @@ void read_scene(char *filename, Camera *camera, Object **objects, Light **lights
       skip_ws(json);
 
       char* value = next_string(json);
-      //TODO: Add lighting into read, and add color values to current objects
-      if (strcmp(value, "camera") == 0) {
+      if(strcmp(value, "camera") == 0){
         current_type = 0;
       } 
-      else if (strcmp(value, "sphere") == 0) {
+      else if(strcmp(value, "sphere") == 0) {
         current_item++;
         if(current_item>127){
           fprintf(stderr, "Error: Too many objects in JSON. Program can only handle 128 objects.\n");
@@ -441,6 +440,7 @@ void read_scene(char *filename, Camera *camera, Object **objects, Light **lights
         }
         objects[current_item] = malloc(sizeof(Object));
         objects[current_item]->type = 0;
+        objects[current_item]->reflectivity = 0;
         current_type = 1;
       } 
       else if (strcmp(value, "plane") == 0) {
@@ -452,6 +452,7 @@ void read_scene(char *filename, Camera *camera, Object **objects, Light **lights
         }
         objects[current_item] = malloc(sizeof(Object));
         objects[current_item]->type = 1;
+        objects[current_item]->reflectivity = 0;
         current_type = 2;
       }
       else if (strcmp(value, "light") == 0) {
@@ -583,7 +584,7 @@ void read_scene(char *filename, Camera *camera, Object **objects, Light **lights
               exit(1);
             }
           }
-          else if(strcmp(key, "reflectivity") == 0){ 
+          else if(strcmp(key, "reflectivity") == 0){
             if(current_type == 1 || current_type == 2){  //only spheres and planes have specular color
                 objects[current_item]->reflectivity = next_number(json);
                 int value = objects[current_item]->reflectivity + objects[current_item]->refractivity;
@@ -1213,14 +1214,78 @@ double clamp(double value){
 Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd, Closest* current_object, int depth){
 	// We have the closest object..
 	Pixel* current_pixel = malloc(sizeof(Pixel));
+	if(depth >= MAX_DEPTH){
+		current_pixel->r = 0;
+		current_pixel->g = 0;
+		current_pixel->b = 0;
+		return current_pixel;
+	}
 	Object* closest_object = current_object->closest_object;
 	double closest_t = current_object->closest_t;
 	double color[3];
 	double Ron[3];
 	double Rdn[3];
+	// N, L, R, V
+	double N[3];
+	double L[3];
+	double R[3];
+	double V[3];
+	double radial_light;
+	double angular_light;
 	color[0] = 0; // ambient_color[0];
   	color[1] = 0; // ambient_color[1];
   	color[2] = 0; // ambient_color[2];
+  	//if reflective, recursively call to get reflection
+  	Pixel* reflect = malloc(sizeof(Pixel));
+  	reflect->r = '0';
+  	reflect->g = '0';
+  	reflect->b = '0';
+  	Pixel* refract = malloc(sizeof(Pixel));
+  	if(current_object->closest_object->reflectivity > 0.00001){ //if it's not reflective, we don't need to calculate this
+  		//get angle of reflection from camera
+  		double new_ray[3];
+  		vector_scale(Rd, -1, new_ray);
+  		Ron[0] = closest_t * Rd[0] + Ro[0];
+      	Ron[1] = closest_t * Rd[1] + Ro[1];
+      	Ron[2] = closest_t * Rd[2] + Ro[2];
+      	vector_normalize(Ron);
+      	if(closest_object->type == 1){
+			N[0] = closest_object->plane.normal[0]; // plane	
+			N[1] = closest_object->plane.normal[1];
+			N[2] = closest_object->plane.normal[2];
+		}
+		else if(closest_object->type == 0){
+			N[0] = Ron[0] - closest_object->position[0]; // sphere
+			N[1] = Ron[1] - closest_object->position[1];
+			N[2] = Ron[2] - closest_object->position[2];
+		}
+		else{
+			printf("Error: Unknown object type.\n");	
+        	exit(1);
+		}
+		vector_reflection(N, new_ray, new_ray);
+		Closest* next_surface = shoot(Ron, new_ray, objects);	
+		if(next_surface->closest_t > 0 && next_surface->closest_t < INFINITY){
+			int new_depth = depth+1;
+  			reflect = recursive_shade(objects, lights, Ron, new_ray, next_surface, new_depth);
+		}
+		else{
+			return reflect;
+		}	
+  	}
+  	else{
+  	}
+  	/*
+  	if(closest_object->refractivity != NULL || closest_object->refractivity > 0.00001){ //if it's not reflective, we don't need to calculate this
+  		//get angle of reflection from camera
+  		refract = shade();	
+  	}
+  	else{
+  		refract.r = 0;
+  		refract.g = 0;
+  		refract.b = 0;
+  	}
+  	*/
 	for (int j=0; lights[j] != NULL; j+=1) {
     	// Shadow test
   		Ron[0] = closest_t * Rd[0] + Ro[0];
@@ -1231,9 +1296,25 @@ Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd,
       	Rdn[2] = lights[j]->position[2] - Ron[2];
       	double distance_to_light = vector_length(Rdn);
       	vector_normalize(Rdn);
-      	//TODOrecursive_shade
       	double shadow_t;
       	int closest_shadow_object = 0;
+		//Get N
+		if(closest_object->type == 1){
+			N[0] = closest_object->plane.normal[0]; // plane	
+			N[1] = closest_object->plane.normal[1];
+			N[2] = closest_object->plane.normal[2];
+		}
+		else if(closest_object->type == 0){
+			N[0] = Ron[0] - closest_object->position[0]; // sphere
+			N[1] = Ron[1] - closest_object->position[1];
+			N[2] = Ron[2] - closest_object->position[2];
+		}
+		else{
+			printf("Error: Unknown object type.\n");	
+        	exit(1);
+		}
+		vector_normalize(N);
+
       	for (int k=0; objects[k] != NULL; k+=1) {
 			if (objects[k] == closest_object) {
 				continue;
@@ -1255,13 +1336,6 @@ Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd,
 			}
       	}
       	if (closest_shadow_object == 0) {
-			// N, L, R, V
-			double N[3];
-			double L[3];
-			double R[3];
-			double V[3];
-			double radial_light;
-			double angular_light;
 			//Get N
 			if(closest_object->type == 1){
 				N[0] = closest_object->plane.normal[0]; // plane	
@@ -1301,9 +1375,9 @@ Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd,
 			specular[2] = calculate_specular(L, N, R, V, closest_object->specular_color[2], lights[j]->color[2]);
 			radial_light = frad(lights[j], distance_to_light);
 			angular_light = fang(lights[j], L);
-			color[0] += radial_light * angular_light * (diffuse[0] + specular[0]);
-			color[1] += radial_light * angular_light * (diffuse[1] + specular[1]);
-			color[2] += radial_light * angular_light * (diffuse[2] + specular[2]);
+			color[0] += (radial_light * angular_light * (diffuse[0] + specular[0]))*(1-closest_object->reflectivity)+(closest_object->reflectivity*((double)reflect->r/255));
+			color[1] += (radial_light * angular_light * (diffuse[1] + specular[1]))*(1-closest_object->reflectivity)+(closest_object->reflectivity*((double)reflect->g/255));
+			color[2] += (radial_light * angular_light * (diffuse[2] + specular[2]))*(1-closest_object->reflectivity)+(closest_object->reflectivity*((double)reflect->b/255));
       	}
     }
 	current_pixel->r = (unsigned char)(255 * clamp(color[0]));
