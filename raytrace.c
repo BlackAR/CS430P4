@@ -82,11 +82,15 @@ void vector_normalize(double* v);
 
 double vector_dot_product(double *v1, double *v2);
 
+void vector_cross_product(double *v1, double *v2, double *result);
+
 double vector_length(double *vector);
 
 void vector_reflection(double *N, double *L, double *result);
 
 void vector_subtraction(double *v1, double *v2, double *result);
+
+void vector_addition(double *v1, double *v2, double *result);
 
 void vector_scale(double *vector, double scalar, double *result);
 
@@ -769,6 +773,12 @@ double vector_dot_product(double *v1, double *v2){
 	return (v1[0]*v2[0]+v1[1]*v2[1]+v1[2]*v2[2]);
 }
 
+void vector_cross_product(double *v1, double *v2, double *result){
+	result[0] = v1[1]*v2[2]-v2[1]*v2[2];
+	result[1] = v1[0]*v2[2]-v2[0]*v2[2];
+	result[2] = v1[0]*v2[1]-v2[0]*v2[1];
+}
+
 double vector_length(double *vector){
 	/*
 	inputs:
@@ -819,6 +829,23 @@ void vector_subtraction(double *v1, double *v2, double *result){
 	result[1] = v2[1] - v1[1];
 	result[2] = v2[2] - v1[2];
 }
+
+void vector_addition(double *v1, double *v2, double *result){
+	/*
+	inputs:
+		double *v1: 3D vector origin
+		double *v2: 3D vector destination
+		double *result: 3D vector to store the resulting vector
+	output:
+		void
+	function:
+		vector_addition() adds v2 to v1 and stores it in result
+	*/
+	result[0] = v2[0] + v1[0];
+	result[1] = v2[1] + v1[1];
+	result[2] = v2[2] + v1[2];
+}
+
 
 void vector_scale(double *vector, double scalar, double *result){
 	/*
@@ -1269,14 +1296,71 @@ Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd,
 		}
   	}
 
-  	if(closest_object->refractivity > 0.00001){ //if it's not reflective, we don't need to calculate this
-  		Ron[0] = closest_t * Rd[0] + Ro[0];
-      	Ron[1] = closest_t * Rd[1] + Ro[1];
-      	Ron[2] = closest_t * Rd[2] + Ro[2];
+  	if(closest_object->refractivity > 0.00001 && depth <= MAX_DEPTH){ //if it's not reflective, we don't need to calculate this
+  		double new_origin[3];
+  		new_origin[0] = closest_t * Rd[0] + Ro[0];
+      	new_origin[1] = closest_t * Rd[1] + Ro[1];
+      	new_origin[2] = closest_t * Rd[2] + Ro[2];
   		//get angle of refraction from camera
-  		Closest* next_surface = shoot(Ron, Rd, objects);
+  		double angle_of_intersection;
+  		double max_angle = cos(90*M_PI/180);
+  		double new_ray[3] = {Rd[0], Rd[1], Rd[2]};
+  		/*
+  		double a[3];
+  		double b[3];
+  		double sin_theta;
+  		double sin_phi;
+  		double cos_phi;
+  		double ior;
+  		if(closest_object->type == 1){
+			N[0] = closest_object->plane.normal[0]; // plane	W
+			N[1] = closest_object->plane.normal[1];
+			N[2] = closest_object->plane.normal[2];
+		}
+		else if(closest_object->type == 0){
+			N[0] = new_origin[0] - closest_object->position[0]; // sphere
+			N[1] = new_origin[1] - closest_object->position[1];
+			N[2] = new_origin[2] - closest_object->position[2];
+		}
+		else{
+			printf("Error: Unknown object type.\n");	
+        	exit(1);
+		}
+		
+		angle_of_intersection = vector_dot_product(N, Rd);
+		printf("A_O_I: %f, max_angle: %f\n", angle_of_intersection, max_angle);
+		//IF angle between N.Rd < cos(theta*M_PI/180)
+		if(closest_object->type == 0 && angle_of_intersection < max_angle){
+			printf("Exiting sphere...\n");
+			ior = 1/closest_object->ior;
+		}
+		else{
+			printf("Entering sphere...\n");
+			ior = closest_object->ior;
+		}
+		
+		ior = closest_object->ior;
+  		vector_cross_product(N, Rd, a);
+  		vector_normalize(a);
+  		vector_cross_product(N, a, b);
+  		sin_theta = vector_dot_product(Rd, b);
+  		sin_phi = ior*sin_theta;
+  		int value = 1-pow(sin_phi, 2);
+  		if (value > 0){
+  			cos_phi = sqrt(value);	
+  		}
+  		else{
+  			cos_phi = 0;
+  		}
+  		
+  		vector_scale(N, -1*cos_phi, N);
+  		vector_scale(b, sin_phi, b);
+  		vector_addition(N, b, new_ray);
+  		*/
+  		Closest* next_surface = shoot(new_origin, new_ray, objects);
 		if(next_surface->closest_t > 0 && next_surface->closest_t < INFINITY){
-  			refract = recursive_shade(objects, lights, Ron, Rd, next_surface, depth);
+			int new_depth = depth + 1;
+  			refract = recursive_shade(objects, lights, new_origin, new_ray, next_surface, new_depth);
 		}
   	}
 	for (int j=0; lights[j] != NULL; j+=1) {
