@@ -910,10 +910,10 @@ double sphere_intersection(double *Ro, double *Rd, double *C, double r) {
   det = sqrt(det);
 
   double t0 = (-b - det) / (2*a);
-  if (t0 > 0) return t0;
+  if (t0 > 0.00001) return t0;
 
   double t1 = (-b + det) / (2*a);
-  if (t1 > 0) return t1;
+  if (t1 > 0.00001) return t1;
 
   return -1;
 }
@@ -1088,8 +1088,7 @@ Closest* shoot(double* Ro, double* Rd, Object** objects){
 	Closest* best_values = malloc(sizeof(Closest));
 	best_values->closest_object = NULL;
 	best_values->closest_t = INFINITY;
-	double Ron[3];
-  	double Rdn[3];
+	vector_normalize(Rd);
   	for (int i=0; objects[i] != 0; i += 1) {
 		double t = 0;
 		switch(objects[i]->type) {
@@ -1103,7 +1102,7 @@ Closest* shoot(double* Ro, double* Rd, Object** objects){
 		  		printf("Error: Unknown object type. Element: %d\n", i);	
 		  		exit(1);
 		}
-		if (t > 0 && t < best_values->closest_t) {
+		if (t > 0.00001 && t < best_values->closest_t) {
 			best_values->closest_t = t;
 	  		best_values->closest_object = objects[i];
 		}
@@ -1161,7 +1160,6 @@ void generate_scene(Camera *camera, Object **objects, Light **lights, Pixel *buf
       	free(current_pixel);
     }
   } 
-
 }
 
 void write_p3(Pixel *buffer, FILE *output_file, int width, int height, int max_color){
@@ -1212,14 +1210,7 @@ double clamp(double value){
 }
 
 Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd, Closest* current_object, int depth){
-	// We have the closest object..
 	Pixel* current_pixel = malloc(sizeof(Pixel));
-	if(depth >= MAX_DEPTH){
-		current_pixel->r = 0;
-		current_pixel->g = 0;
-		current_pixel->b = 0;
-		return current_pixel;
-	}
 	Object* closest_object = current_object->closest_object;
 	double closest_t = current_object->closest_t;
 	double color[3];
@@ -1237,20 +1228,23 @@ Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd,
   	color[2] = 0; // ambient_color[2];
   	//if reflective, recursively call to get reflection
   	Pixel* reflect = malloc(sizeof(Pixel));
-  	reflect->r = '0';
-  	reflect->g = '0';
-  	reflect->b = '0';
+  	reflect->r = 0;
+  	reflect->g = 0;
+  	reflect->b = 0;
   	Pixel* refract = malloc(sizeof(Pixel));
-  	if(current_object->closest_object->reflectivity > 0.00001){ //if it's not reflective, we don't need to calculate this
+  	refract->r = 0;
+  	refract->g = 0;
+  	refract->b = 0;
+  		
+  	if(current_object->closest_object->reflectivity > 0.00001 && depth <= MAX_DEPTH){ //if it's not reflective, we don't need to calculate this
   		//get angle of reflection from camera
   		double new_ray[3];
   		vector_scale(Rd, -1, new_ray);
   		Ron[0] = closest_t * Rd[0] + Ro[0];
       	Ron[1] = closest_t * Rd[1] + Ro[1];
       	Ron[2] = closest_t * Rd[2] + Ro[2];
-      	vector_normalize(Ron);
       	if(closest_object->type == 1){
-			N[0] = closest_object->plane.normal[0]; // plane	
+			N[0] = closest_object->plane.normal[0]; // plane	W
 			N[1] = closest_object->plane.normal[1];
 			N[2] = closest_object->plane.normal[2];
 		}
@@ -1263,29 +1257,28 @@ Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd,
 			printf("Error: Unknown object type.\n");	
         	exit(1);
 		}
-		vector_reflection(N, new_ray, new_ray);
-		Closest* next_surface = shoot(Ron, new_ray, objects);	
+		vector_normalize(N);
+		vector_normalize(new_ray);
+		vector_reflection(N, new_ray, R);
+		vector_normalize(R);
+		Closest* next_surface = shoot(Ron, R, objects);	
 		if(next_surface->closest_t > 0 && next_surface->closest_t < INFINITY){
+			//printf("Current object: %d, Next object: %d, distance: %f, reflective depth: %d\n", closest_object->type, next_surface->closest_object->type, next_surface->closest_t, reflect_depth);
 			int new_depth = depth+1;
-  			reflect = recursive_shade(objects, lights, Ron, new_ray, next_surface, new_depth);
+  			reflect = recursive_shade(objects, lights, Ron, R, next_surface, new_depth);
 		}
-		else{
-			return reflect;
-		}	
   	}
-  	else{
+
+  	if(closest_object->refractivity > 0.00001){ //if it's not reflective, we don't need to calculate this
+  		Ron[0] = closest_t * Rd[0] + Ro[0];
+      	Ron[1] = closest_t * Rd[1] + Ro[1];
+      	Ron[2] = closest_t * Rd[2] + Ro[2];
+  		//get angle of refraction from camera
+  		Closest* next_surface = shoot(Ron, Rd, objects);
+		if(next_surface->closest_t > 0 && next_surface->closest_t < INFINITY){
+  			refract = recursive_shade(objects, lights, Ron, Rd, next_surface, depth);
+		}
   	}
-  	/*
-  	if(closest_object->refractivity != NULL || closest_object->refractivity > 0.00001){ //if it's not reflective, we don't need to calculate this
-  		//get angle of reflection from camera
-  		refract = shade();	
-  	}
-  	else{
-  		refract.r = 0;
-  		refract.g = 0;
-  		refract.b = 0;
-  	}
-  	*/
 	for (int j=0; lights[j] != NULL; j+=1) {
     	// Shadow test
   		Ron[0] = closest_t * Rd[0] + Ro[0];
@@ -1375,9 +1368,23 @@ Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd,
 			specular[2] = calculate_specular(L, N, R, V, closest_object->specular_color[2], lights[j]->color[2]);
 			radial_light = frad(lights[j], distance_to_light);
 			angular_light = fang(lights[j], L);
-			color[0] += (radial_light * angular_light * (diffuse[0] + specular[0]))*(1-closest_object->reflectivity)+(closest_object->reflectivity*((double)reflect->r/255));
-			color[1] += (radial_light * angular_light * (diffuse[1] + specular[1]))*(1-closest_object->reflectivity)+(closest_object->reflectivity*((double)reflect->g/255));
-			color[2] += (radial_light * angular_light * (diffuse[2] + specular[2]))*(1-closest_object->reflectivity)+(closest_object->reflectivity*((double)reflect->b/255));
+			double reflective[3];
+			reflective[0] = ((double)reflect->r)/255;
+			reflective[1] = ((double)reflect->g)/255;
+			reflective[2] = ((double)reflect->b)/255;
+			double refractive[3];
+			refractive[0] = ((double)refract->r)/255;
+			refractive[1] = ((double)refract->g)/255;
+			refractive[2] = ((double)refract->b)/255;
+			color[0] += (radial_light * angular_light * (diffuse[0] + specular[0]))*(1-closest_object->reflectivity-closest_object->refractivity);
+			color[0] += (closest_object->reflectivity*reflective[0]);
+			color[0] += (closest_object->refractivity*refractive[0]);
+			color[1] += (radial_light * angular_light * (diffuse[1] + specular[1]))*(1-closest_object->reflectivity-closest_object->refractivity);
+			color[1] += (closest_object->reflectivity*reflective[1]);
+			color[1] += (closest_object->refractivity*refractive[1]);
+			color[2] += (radial_light * angular_light * (diffuse[2] + specular[2]))*(1-closest_object->reflectivity-closest_object->refractivity);
+			color[2] += (closest_object->reflectivity*reflective[2]);
+			color[2] += (closest_object->refractivity*refractive[2]);
       	}
     }
 	current_pixel->r = (unsigned char)(255 * clamp(color[0]));
