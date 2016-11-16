@@ -774,9 +774,9 @@ double vector_dot_product(double *v1, double *v2){
 }
 
 void vector_cross_product(double *v1, double *v2, double *result){
-	result[0] = v1[1]*v2[2]-v2[1]*v2[2];
-	result[1] = v1[0]*v2[2]-v2[0]*v2[2];
-	result[2] = v1[0]*v2[1]-v2[0]*v2[1];
+	result[0] = v1[1]*v2[2]-v2[1]*v1[2];
+	result[1] = v2[0]*v1[2]-v1[0]*v2[2];
+	result[2] = v1[0]*v2[1]-v2[0]*v1[1];
 }
 
 double vector_length(double *vector){
@@ -1316,50 +1316,49 @@ Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd,
 			N[2] = closest_object->plane.normal[2];
 		}
 		else if(closest_object->type == 0){
-			N[0] = new_origin[0] - closest_object->position[0]; // sphere
-			N[1] = new_origin[1] - closest_object->position[1];
-			N[2] = new_origin[2] - closest_object->position[2];
+			N[0] = Ro[0] - closest_object->position[0]; // sphere
+			N[1] = Ro[1] - closest_object->position[1];
+			N[2] = Ro[2] - closest_object->position[2];
 		}
 		else{
 			printf("Error: Unknown object type.\n");	
         	exit(1);
 		}
 		
-		if(exiting_sphere == 1){
+		if(exiting_sphere == 1){ //if we're leaving sphere, we need to get the IoR outside the sphere back and divide by it
 			external_ior = closest_object->ior*current_ior; //since we're attempting to leave the sphere, which current ior is outside/inside, inside/(outside/inside) = outside
 			ior = closest_object->ior/external_ior; //gets inside/outside to return ray to normal
 		}
-		else{
+		else{  //for entering spheres and planes
 			ior = current_ior/closest_object->ior;
 		}
+		vector_normalize(N);
+		vector_normalize(Rd);
   		vector_cross_product(N, Rd, a);
   		vector_normalize(a);
-  		vector_cross_product(N, a, b);
+  		vector_cross_product(a, N, b);
+  		vector_normalize(b);
   		sin_theta = vector_dot_product(Rd, b);
   		sin_phi = ior*sin_theta;
-  		int value = 1-pow(sin_phi, 2);
-  		if (value > 0){
-  			cos_phi = sqrt(value);	
-  		}
-  		else{
-  			cos_phi = 0;
-  		}
-  		
-  		vector_scale(N, -1*cos_phi, N);
-  		vector_scale(b, sin_phi, b);
-  		vector_addition(N, b, new_ray);
-  		Closest* next_surface = shoot(new_origin, new_ray, objects);
-		if(next_surface->closest_t > 0 && next_surface->closest_t < INFINITY){
-			int new_depth = depth + 1;
-			if(next_surface->closest_object == closest_object){
-				refract = recursive_shade(objects, lights, new_origin, new_ray, next_surface, new_depth, ior, 1);
-			}
-			else{
-				if(exiting_sphere == 1){
-					refract = recursive_shade(objects, lights, new_origin, new_ray, next_surface, new_depth, external_ior, 0);	
+  		if(pow(sin_phi, 2)<=1){
+  			cos_phi = sqrt(1-pow(sin_phi, 2));	  		
+	  		vector_scale(N, -1*cos_phi, N);
+	  		vector_scale(b, sin_phi, b);
+	  		vector_addition(N, b, new_ray);
+	  		vector_normalize(new_ray);
+	  		Closest* next_surface = shoot(new_origin, new_ray, objects);
+			if(next_surface->closest_t > 0 && next_surface->closest_t < INFINITY){
+				int new_depth = depth + 1;
+				if(next_surface->closest_object == closest_object){
+					refract = recursive_shade(objects, lights, new_origin, new_ray, next_surface, new_depth, ior, 1);
 				}
 				else{
-					refract = recursive_shade(objects, lights, new_origin, new_ray, next_surface, new_depth, ior, 0);		
+					if(exiting_sphere == 1){
+						refract = recursive_shade(objects, lights, new_origin, new_ray, next_surface, new_depth, external_ior, 0);	
+					}
+					else{
+						refract = recursive_shade(objects, lights, new_origin, new_ray, next_surface, new_depth, ior, 0);		
+					}
 				}
 			}
 		}

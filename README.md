@@ -15,5 +15,3 @@ Input and output files can be named by user, so long as they are json and ppm fi
 
 Objects within the json that have duplicate values (such as two color keys or two camera objects) will be overwritten by
 objects later in the file.
-
-*NOTE: Currently IoR is not implemented. Currently every other portion is implemented. Will remove this note if IoR is implemented prior to deadline.*
