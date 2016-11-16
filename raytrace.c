@@ -100,6 +100,7 @@ double sphere_intersection(double* Ro, double* Rd, double* C, double r);
 
 double plane_intersection(double* Ro, double* Rd, double* P, double* N);
 
+Closest* shoot(double* Ro, double* Rd, Object **objects);
 //--------------LIGHT FUNCTIONS----------------------
 
 double calculate_diffuse(double object_diff_color, double light_color, double *N, double *L);
@@ -114,13 +115,11 @@ double fang(Light *light, double *L);
 
 void generate_scene(Camera* camera, Object** objects, Light** lights, Pixel* buffer, int width, int height);
 
+Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd, Closest* current_object, int depth, double current_ior, int exiting_sphere);
+
 void write_p3(Pixel *buffer, FILE *output_file, int width, int height, int max_color);
 
 double clamp(double value);
-
-Closest* shoot(double* Ro, double* Rd, Object **objects);
-
-Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd, Closest* current_object, int depth, double current_ior, int exiting_sphere);
 
 //===========================================================================================================
 
@@ -444,7 +443,9 @@ void read_scene(char *filename, Camera *camera, Object **objects, Light **lights
         }
         objects[current_item] = malloc(sizeof(Object));
         objects[current_item]->type = 0;
-        objects[current_item]->reflectivity = 0;
+        objects[current_item]->reflectivity = 0.0;
+        objects[current_item]->refractivity = 0.0;
+        objects[current_item]->ior = 1.0;
         current_type = 1;
       } 
       else if (strcmp(value, "plane") == 0) {
@@ -456,7 +457,9 @@ void read_scene(char *filename, Camera *camera, Object **objects, Light **lights
         }
         objects[current_item] = malloc(sizeof(Object));
         objects[current_item]->type = 1;
-        objects[current_item]->reflectivity = 0;
+        objects[current_item]->reflectivity = 0.0;
+        objects[current_item]->refractivity = 0.0;
+        objects[current_item]->ior = 1.0;
         current_type = 2;
       }
       else if (strcmp(value, "light") == 0) {
@@ -996,6 +999,45 @@ double plane_intersection(double *Ro, double *Rd, double *P, double *N) {
   return -1;
 }
 
+Closest* shoot(double *Ro, double *Rd, Object **objects){
+	/*
+	inputs:
+		double *Ro: Origin of ray
+		double *Rd: Direction of ray
+		double **objects: List of objects to check for intersection
+	output:
+		Closest structure, containing the distance to the closest object
+		and the closest object of intersection
+	function:
+		shoot() takes in a ray (origin and direction), and iterate over the
+		provided array of objects. Returns the closest object to intersect
+		with the ray origin, with the distance to that object.
+	*/
+	Closest* best_values = malloc(sizeof(Closest));
+	best_values->closest_object = NULL;
+	best_values->closest_t = INFINITY;
+	vector_normalize(Rd);
+  	for (int i=0; objects[i] != 0; i += 1) {
+		double t = 0;
+		switch(objects[i]->type) {
+			case 0:
+		  		t = sphere_intersection(Ro, Rd, objects[i]->position, objects[i]->sphere.radius);
+		  		break;
+			case 1:
+		  		t = plane_intersection(Ro, Rd, objects[i]->position, objects[i]->plane.normal);
+		  		break;
+			default:
+		  		printf("Error: Unknown object type. Element: %d\n", i);	
+		  		exit(1);
+		}
+		if (t > 0.00001 && t < best_values->closest_t) {
+			best_values->closest_t = t;
+	  		best_values->closest_object = objects[i];
+		}
+	}
+	return best_values;
+}
+
 //--------------LIGHT FUNCTIONS----------------------
 
 double calculate_diffuse(double object_diff_color, double light_color, double *N, double *L){
@@ -1111,31 +1153,7 @@ double fang(Light *light, double *L){
 	return 0;
 }
 
-Closest* shoot(double* Ro, double* Rd, Object** objects){
-	Closest* best_values = malloc(sizeof(Closest));
-	best_values->closest_object = NULL;
-	best_values->closest_t = INFINITY;
-	vector_normalize(Rd);
-  	for (int i=0; objects[i] != 0; i += 1) {
-		double t = 0;
-		switch(objects[i]->type) {
-			case 0:
-		  		t = sphere_intersection(Ro, Rd, objects[i]->position, objects[i]->sphere.radius);
-		  		break;
-			case 1:
-		  		t = plane_intersection(Ro, Rd, objects[i]->position, objects[i]->plane.normal);
-		  		break;
-			default:
-		  		printf("Error: Unknown object type. Element: %d\n", i);	
-		  		exit(1);
-		}
-		if (t > 0.00001 && t < best_values->closest_t) {
-			best_values->closest_t = t;
-	  		best_values->closest_object = objects[i];
-		}
-	}
-	return best_values;
-}
+
 
 //--------------IMAGE FUNCTIONS----------------------
 
@@ -1189,54 +1207,24 @@ void generate_scene(Camera *camera, Object **objects, Light **lights, Pixel *buf
   } 
 }
 
-void write_p3(Pixel *buffer, FILE *output_file, int width, int height, int max_color){
+Pixel* recursive_shade(Object **objects, Light **lights, double *Ro, double *Rd, Closest *current_object, int depth, double current_ior, int exiting_sphere){
 	/*
-	input:	
-		Pixel *buffer: the buffer of pixels
-		FILE *output_file: the PPM file to write the image
-		int width: the width of the image
-		int height: the height of the image
-		int max_color: the maximum color values allowed
-	output: 
-		void
+	inputs:
+		Object **objects: the array of objects to render in the scene
+		Light **lights: the array of lights to illuminate the scene
+		double *Ro: origin of ray
+		double *Rd: direction of ray
+		Closest *current_object: contains object intersected, as well as distance to object.
+		int depth: current recursive depth of the function
+		double current_ior: The current IoR of the environment, for use in refraction. If in "space", value is 1. Is multiplied
+		by each plane/ sphere that is passed through. Also used to get the IoR outside a sphere when exiting it.
+		int exiting_sphere: 1 if currently inside a sphere, used to calculate ior
+	output:
+		Pixel* contains three color channels (R, G, B)
 	function:
-		write_p3() generates a PPM image file in P3 format
+		recursive_shade() is used for coloring of pixels. Calls itself on reflective and refractive surfaces. Returns the result
+		of reflection, refraction, and lights shining on the object in the form of a Pixel.
 	*/
-  fprintf(output_file, "P3\n%d %d\n%d\n", width, height, max_color);
-  int current_width = 1;
-  for(int i = 0; i < width*height; i++){
-    fprintf(output_file, "%d %d %d ", buffer[i].r, buffer[i].g, buffer[i].b);
-    if(current_width >= 70%12){ //ppm line length = 70, max characters to pixels = 12.
-      fprintf(output_file, "\n");
-      current_width = 1;
-    }
-    else{
-      current_width++;
-    }
-  }
-}
-
-double clamp(double value){
-	/*
-	inputs: 
-		double value: value to be clamped (usually color values)
-	output: 
-		double: value betwee 0 and 1 (inclusive)
-	function: 
-		clamp() returns the value given, restricted to the range of 0 and 1
-	*/
-	if (value < 0){
-		return 0;
-	}
-	else if (value > 1){
-		return 1;
-	}
-	else{
-		return value;
-	}
-}
-
-Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd, Closest* current_object, int depth, double current_ior, int exiting_sphere){
 	Pixel* current_pixel = malloc(sizeof(Pixel));
 	Object* closest_object = current_object->closest_object;
 	double closest_t = current_object->closest_t;
@@ -1288,7 +1276,9 @@ Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd,
 		vector_normalize(new_ray);
 		vector_reflection(N, new_ray, R);
 		vector_normalize(R);
+		//find out if the ray hits something.
 		Closest* next_surface = shoot(Ron, R, objects);	
+		//if it does, get the color from it, otherwise, move along
 		if(next_surface->closest_t > 0 && next_surface->closest_t < INFINITY){
 			//printf("Current object: %d, Next object: %d, distance: %f, reflective depth: %d\n", closest_object->type, next_surface->closest_object->type, next_surface->closest_t, reflect_depth);
 			int new_depth = depth+1;
@@ -1334,13 +1324,13 @@ Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd,
 		}
 		vector_normalize(N);
 		vector_normalize(Rd);
-  		vector_cross_product(N, Rd, a);
-  		vector_normalize(a);
-  		vector_cross_product(a, N, b);
+  		vector_cross_product(N, Rd, a);  //NxUr
+  		vector_normalize(a); // a / ||NxUr||
+  		vector_cross_product(a, N, b); //axN
   		vector_normalize(b);
-  		sin_theta = vector_dot_product(Rd, b);
-  		sin_phi = ior*sin_theta;
-  		if(pow(sin_phi, 2)<=1){
+  		sin_theta = vector_dot_product(Rd, b); //Ur.b
+  		sin_phi = ior*sin_theta; //(pr/pt)*sin(theta)
+  		if(pow(sin_phi, 2)<=1){ // if this is greater than 1, we would attempt to take the square root of a negative number, which is not valid.
   			cos_phi = sqrt(1-pow(sin_phi, 2));	  		
 	  		vector_scale(N, -1*cos_phi, N);
 	  		vector_scale(b, sin_phi, b);
@@ -1478,5 +1468,51 @@ Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd,
 	current_pixel->g = (unsigned char)(255 * clamp(color[1]));
 	current_pixel->b = (unsigned char)(255 * clamp(color[2]));
 	return current_pixel;
-	
+}
+
+void write_p3(Pixel *buffer, FILE *output_file, int width, int height, int max_color){
+	/*
+	input:	
+		Pixel *buffer: the buffer of pixels
+		FILE *output_file: the PPM file to write the image
+		int width: the width of the image
+		int height: the height of the image
+		int max_color: the maximum color values allowed
+	output: 
+		void
+	function:
+		write_p3() generates a PPM image file in P3 format
+	*/
+  fprintf(output_file, "P3\n%d %d\n%d\n", width, height, max_color);
+  int current_width = 1;
+  for(int i = 0; i < width*height; i++){
+    fprintf(output_file, "%d %d %d ", buffer[i].r, buffer[i].g, buffer[i].b);
+    if(current_width >= 70%12){ //ppm line length = 70, max characters to pixels = 12.
+      fprintf(output_file, "\n");
+      current_width = 1;
+    }
+    else{
+      current_width++;
+    }
+  }
+}
+
+double clamp(double value){
+	/*
+	inputs: 
+		double value: value to be clamped (usually color values)
+	output: 
+		double: value betwee 0 and 1 (inclusive)
+	function: 
+		clamp() returns the value given, restricted to the range of 0 and 1
+	*/
+	if (value < 0){
+		return 0;
+	}
+	else if (value > 1){
+		return 1;
+	}
+	else{
+		return value;
+	}
 }
