@@ -120,7 +120,7 @@ double clamp(double value);
 
 Closest* shoot(double* Ro, double* Rd, Object **objects);
 
-Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd, Closest* current_object, int depth);
+Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd, Closest* current_object, int depth, double current_ior, int exiting_sphere);
 
 //===========================================================================================================
 
@@ -1173,7 +1173,7 @@ void generate_scene(Camera *camera, Object **objects, Light **lights, Pixel *buf
       	vector_normalize(Rd);
   		Closest* nearest_object = shoot(Ro, Rd, objects);
 		if (nearest_object->closest_t > 0 && nearest_object->closest_t != INFINITY) {
-			current_pixel = recursive_shade(objects, lights, Ro, Rd, nearest_object, 0);
+			current_pixel = recursive_shade(objects, lights, Ro, Rd, nearest_object, 0, 1.0, 0);
 		}	 
 		else {
 		  	current_pixel->r = 0;
@@ -1236,7 +1236,7 @@ double clamp(double value){
 	}
 }
 
-Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd, Closest* current_object, int depth){
+Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd, Closest* current_object, int depth, double current_ior, int exiting_sphere){
 	Pixel* current_pixel = malloc(sizeof(Pixel));
 	Object* closest_object = current_object->closest_object;
 	double closest_t = current_object->closest_t;
@@ -1292,7 +1292,7 @@ Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd,
 		if(next_surface->closest_t > 0 && next_surface->closest_t < INFINITY){
 			//printf("Current object: %d, Next object: %d, distance: %f, reflective depth: %d\n", closest_object->type, next_surface->closest_object->type, next_surface->closest_t, reflect_depth);
 			int new_depth = depth+1;
-  			reflect = recursive_shade(objects, lights, Ron, R, next_surface, new_depth);
+  			reflect = recursive_shade(objects, lights, Ron, R, next_surface, new_depth, current_ior, 0);
 		}
   	}
 
@@ -1301,17 +1301,15 @@ Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd,
   		new_origin[0] = closest_t * Rd[0] + Ro[0];
       	new_origin[1] = closest_t * Rd[1] + Ro[1];
       	new_origin[2] = closest_t * Rd[2] + Ro[2];
-  		//get angle of refraction from camera
-  		double angle_of_intersection;
-  		double max_angle = cos(90*M_PI/180);
   		double new_ray[3] = {Rd[0], Rd[1], Rd[2]};
-  		/*
   		double a[3];
   		double b[3];
   		double sin_theta;
   		double sin_phi;
   		double cos_phi;
+  		double external_ior;
   		double ior;
+
   		if(closest_object->type == 1){
 			N[0] = closest_object->plane.normal[0]; // plane	W
 			N[1] = closest_object->plane.normal[1];
@@ -1327,19 +1325,13 @@ Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd,
         	exit(1);
 		}
 		
-		angle_of_intersection = vector_dot_product(N, Rd);
-		printf("A_O_I: %f, max_angle: %f\n", angle_of_intersection, max_angle);
-		//IF angle between N.Rd < cos(theta*M_PI/180)
-		if(closest_object->type == 0 && angle_of_intersection < max_angle){
-			printf("Exiting sphere...\n");
-			ior = 1/closest_object->ior;
+		if(exiting_sphere == 1){
+			external_ior = closest_object->ior*current_ior; //since we're attempting to leave the sphere, which current ior is outside/inside, inside/(outside/inside) = outside
+			ior = closest_object->ior/external_ior; //gets inside/outside to return ray to normal
 		}
 		else{
-			printf("Entering sphere...\n");
-			ior = closest_object->ior;
+			ior = current_ior/closest_object->ior;
 		}
-		
-		ior = closest_object->ior;
   		vector_cross_product(N, Rd, a);
   		vector_normalize(a);
   		vector_cross_product(N, a, b);
@@ -1356,11 +1348,20 @@ Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd,
   		vector_scale(N, -1*cos_phi, N);
   		vector_scale(b, sin_phi, b);
   		vector_addition(N, b, new_ray);
-  		*/
   		Closest* next_surface = shoot(new_origin, new_ray, objects);
 		if(next_surface->closest_t > 0 && next_surface->closest_t < INFINITY){
 			int new_depth = depth + 1;
-  			refract = recursive_shade(objects, lights, new_origin, new_ray, next_surface, new_depth);
+			if(next_surface->closest_object == closest_object){
+				refract = recursive_shade(objects, lights, new_origin, new_ray, next_surface, new_depth, ior, 1);
+			}
+			else{
+				if(exiting_sphere == 1){
+					refract = recursive_shade(objects, lights, new_origin, new_ray, next_surface, new_depth, external_ior, 0);	
+				}
+				else{
+					refract = recursive_shade(objects, lights, new_origin, new_ray, next_surface, new_depth, ior, 0);		
+				}
+			}
 		}
   	}
 	for (int j=0; lights[j] != NULL; j+=1) {
@@ -1452,25 +1453,28 @@ Pixel* recursive_shade(Object **objects, Light **lights, double* Ro, double* Rd,
 			specular[2] = calculate_specular(L, N, R, V, closest_object->specular_color[2], lights[j]->color[2]);
 			radial_light = frad(lights[j], distance_to_light);
 			angular_light = fang(lights[j], L);
-			double reflective[3];
-			reflective[0] = ((double)reflect->r)/255;
-			reflective[1] = ((double)reflect->g)/255;
-			reflective[2] = ((double)reflect->b)/255;
-			double refractive[3];
-			refractive[0] = ((double)refract->r)/255;
-			refractive[1] = ((double)refract->g)/255;
-			refractive[2] = ((double)refract->b)/255;
-			color[0] += (radial_light * angular_light * (diffuse[0] + specular[0]))*(1-closest_object->reflectivity-closest_object->refractivity);
-			color[0] += (closest_object->reflectivity*reflective[0]);
-			color[0] += (closest_object->refractivity*refractive[0]);
-			color[1] += (radial_light * angular_light * (diffuse[1] + specular[1]))*(1-closest_object->reflectivity-closest_object->refractivity);
-			color[1] += (closest_object->reflectivity*reflective[1]);
-			color[1] += (closest_object->refractivity*refractive[1]);
-			color[2] += (radial_light * angular_light * (diffuse[2] + specular[2]))*(1-closest_object->reflectivity-closest_object->refractivity);
-			color[2] += (closest_object->reflectivity*reflective[2]);
-			color[2] += (closest_object->refractivity*refractive[2]);
+			color[0] += (radial_light * angular_light * (diffuse[0] + specular[0]));
+			color[1] += (radial_light * angular_light * (diffuse[1] + specular[1]));
+			color[2] += (radial_light * angular_light * (diffuse[2] + specular[2]));
       	}
     }
+	double reflective[3];
+	reflective[0] = ((double)reflect->r)/255;
+	reflective[1] = ((double)reflect->g)/255;
+	reflective[2] = ((double)reflect->b)/255;
+	double refractive[3];
+	refractive[0] = ((double)refract->r)/255;
+	refractive[1] = ((double)refract->g)/255;
+	refractive[2] = ((double)refract->b)/255;
+	color[0] = (color[0])*(1-closest_object->reflectivity-closest_object->refractivity);
+	color[0] += (closest_object->reflectivity*reflective[0]);
+	color[0] += (closest_object->refractivity*refractive[0]);
+	color[1] = (color[1])*(1-closest_object->reflectivity-closest_object->refractivity);
+	color[1] += (closest_object->reflectivity*reflective[1]);
+	color[1] += (closest_object->refractivity*refractive[1]);
+	color[2] = (color[2])*(1-closest_object->reflectivity-closest_object->refractivity);
+	color[2] += (closest_object->reflectivity*reflective[2]);
+	color[2] += (closest_object->refractivity*refractive[2]);
 	current_pixel->r = (unsigned char)(255 * clamp(color[0]));
 	current_pixel->g = (unsigned char)(255 * clamp(color[1]));
 	current_pixel->b = (unsigned char)(255 * clamp(color[2]));
